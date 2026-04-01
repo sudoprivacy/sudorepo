@@ -4,6 +4,9 @@ permissions:
   contents: write
 
 on:
+  push:
+    tags:
+      - 'v*'
   workflow_dispatch:
     inputs:
       openclaw_version:
@@ -11,14 +14,6 @@ on:
         type: string
         required: false
         default: 'latest'
-      create_release:
-        description: 'Create a GitHub release with built bundles'
-        type: boolean
-        default: false
-      release_tag:
-        description: 'Release tag when create_release=true'
-        type: string
-        required: false
 
 jobs:
   build:
@@ -58,7 +53,11 @@ jobs:
       - name: Build archive
         shell: bash
         run: |
-          node scripts/build-openclaw-tgz.js --force --version="${{ inputs.openclaw_version }}"
+          VERSION="${{ inputs.openclaw_version }}"
+          if [ -z "$VERSION" ] && [ -n "${{ github.ref_name }}" ]; then
+            VERSION="${{ github.ref_name }}"
+          fi
+          node scripts/build-openclaw-tgz.js --force --version="${VERSION#v}"
         env:
           npm_config_arch: ${{ matrix.arch }}
 
@@ -81,7 +80,7 @@ jobs:
     name: Create release
     runs-on: ubuntu-latest
     needs: build
-    if: ${{ inputs.create_release && inputs.release_tag != '' }}
+    if: startsWith(github.ref, 'refs/tags/')
 
     steps:
       - name: Download artifacts
@@ -99,12 +98,12 @@ jobs:
       - name: Create GitHub release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ inputs.release_tag }}
-          name: OpenClaw Bundles ${{ inputs.release_tag }}
+          tag_name: ${{ github.ref_name }}
+          name: OpenClaw Bundles ${{ github.ref_name }}
           body: |
-            Platform-specific OpenClaw bundles built from npm version `${{ inputs.openclaw_version }}`.
+            Platform-specific OpenClaw bundles built from npm version `${{ matrix.asset_name }}`.
           files: final-assets/*
           draft: false
-          prerelease: true
+          prerelease: false
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

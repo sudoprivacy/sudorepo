@@ -13,7 +13,7 @@ on:
         description: 'OpenClaw version or dist-tag'
         type: string
         required: false
-        default: 'latest'
+        default: '2026.03.11'
 
 jobs:
   build:
@@ -53,11 +53,12 @@ jobs:
       - name: Build archive
         shell: bash
         run: |
-          VERSION="${{ inputs.openclaw_version }}"
-          if [ -z "$VERSION" ] && [ -n "${{ github.ref_name }}" ]; then
+          if [ "${{ github.event_name }}" == "push" ]; then
             VERSION="${{ github.ref_name }}"
+          else
+            VERSION="${{ inputs.openclaw_version }}"
           fi
-          node scripts/build-openclaw-tgz.js --force --version="${VERSION#v}"
+          node scripts/build-openclaw-tgz.js --force --version="$VERSION"
         env:
           npm_config_arch: ${{ matrix.arch }}
 

@@ -172,8 +172,8 @@ await import('./openclaw.mjs');
 
   const unixWrapper = `#!/bin/sh
 CLI="$(dirname "$0")/../launcher.mjs"
-STATE_DIR="${HOME}/.nexus/sudoclaw"
-BUNDLED_NODE="${HOME}/.nexus/node/bin/node"
+STATE_DIR="\${HOME}/.nexus/sudoclaw"
+BUNDLED_NODE="\${HOME}/.nexus/node/bin/node"
 
 if [ ! -x "$BUNDLED_NODE" ]; then
   echo "Error: Bundled Node.js not found at $BUNDLED_NODE" >&2
@@ -271,6 +271,7 @@ function main() {
 try {
   main();
 } catch (error) {
-  console.error(`[openclaw-builder] ${error.message}`);
+  console.error(`[openclaw-builder] Error: ${error.message}`);
+  console.error(error.stack);
   process.exit(1);
 }

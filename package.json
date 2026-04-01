@@ -1,0 +1,10 @@
+{
+  "name": "sudorepo",
+  "private": true,
+  "version": "0.0.0",
+  "description": "Standalone builders for Sudowork runtime artifacts",
+  "license": "UNLICENSED",
+  "scripts": {
+    "build:openclaw": "node scripts/build-openclaw-tgz.js"
+  }
+}

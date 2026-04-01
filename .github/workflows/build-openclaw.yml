@@ -1,0 +1,110 @@
+name: Build OpenClaw Bundles
+
+permissions:
+  contents: write
+
+on:
+  workflow_dispatch:
+    inputs:
+      openclaw_version:
+        description: 'OpenClaw version or dist-tag'
+        type: string
+        required: false
+        default: 'latest'
+      create_release:
+        description: 'Create a GitHub release with built bundles'
+        type: boolean
+        default: false
+      release_tag:
+        description: 'Release tag when create_release=true'
+        type: string
+        required: false
+
+jobs:
+  build:
+    name: Build ${{ matrix.asset_name }}
+    runs-on: ${{ matrix.os }}
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-14
+            platform: macos
+            arch: arm64
+            asset_name: openclaw-macos-arm64.tgz
+          - os: macos-14
+            platform: macos
+            arch: x64
+            asset_name: openclaw-macos-x64.tgz
+          - os: windows-2022
+            platform: windows
+            arch: arm64
+            asset_name: openclaw-windows-arm64.tgz
+          - os: windows-2022
+            platform: windows
+            arch: x64
+            asset_name: openclaw-windows-x64.tgz
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Build archive
+        shell: bash
+        run: |
+          node scripts/build-openclaw-tgz.js --force --version="${{ inputs.openclaw_version }}"
+        env:
+          npm_config_arch: ${{ matrix.arch }}
+
+      - name: Rename archive
+        shell: bash
+        run: |
+          cp dist/openclaw.tgz "dist/${{ matrix.asset_name }}"
+          cp dist/openclaw.manifest.json "dist/${{ matrix.asset_name }}.manifest.json"
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.asset_name }}
+          path: |
+            dist/${{ matrix.asset_name }}
+            dist/${{ matrix.asset_name }}.manifest.json
+          retention-days: 7
+
+  release:
+    name: Create release
+    runs-on: ubuntu-latest
+    needs: build
+    if: ${{ inputs.create_release && inputs.release_tag != '' }}
+
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+
+      - name: Flatten assets
+        shell: bash
+        run: |
+          mkdir -p final-assets
+          find release-assets -type f -maxdepth 2 -exec cp {} final-assets/ \;
+          ls -lh final-assets
+
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ inputs.release_tag }}
+          name: OpenClaw Bundles ${{ inputs.release_tag }}
+          body: |
+            Platform-specific OpenClaw bundles built from npm version `${{ inputs.openclaw_version }}`.
+          files: final-assets/*
+          draft: false
+          prerelease: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

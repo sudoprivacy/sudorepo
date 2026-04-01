@@ -32,10 +32,15 @@ function log(message) {
 }
 
 function run(command, options = {}) {
+  const env = { ...process.env };
+  if (!env.HOME && process.platform === 'win32') {
+    env.HOME = env.USERPROFILE || 'C:\\Users\\runneradmin';
+  }
   execSync(command, {
     stdio: 'inherit',
     shell: process.platform === 'win32',
     timeout: EXEC_TIMEOUT,
+    env,
     ...options,
   });
 }

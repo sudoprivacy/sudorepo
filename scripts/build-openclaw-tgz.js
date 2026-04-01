@@ -14,10 +14,8 @@ const args = process.argv.slice(2);
 const force = args.includes('--force');
 const versionArg = args.find((arg) => arg.startsWith('--version='));
 const requestedVersion = versionArg ? versionArg.split('=')[1] : 'latest';
-const npmRegistry =
-  process.env.NPM_CONFIG_REGISTRY ||
-  process.env.npm_config_registry ||
-  'https://registry.npmjs.org/';
+const npmRegistry = 'https://registry.npmjs.org/';
+const EXEC_TIMEOUT = 20 * 60 * 1000; // 20 minutes
 const targetPlatform =
   process.env.npm_config_platform ||
   process.env.NPM_CONFIG_PLATFORM ||
@@ -37,6 +35,7 @@ function run(command, options = {}) {
   execSync(command, {
     stdio: 'inherit',
     shell: process.platform === 'win32',
+    timeout: EXEC_TIMEOUT,
     ...options,
   });
 }
@@ -46,6 +45,7 @@ function runCapture(command, options = {}) {
     stdio: ['ignore', 'pipe', 'pipe'],
     shell: process.platform === 'win32',
     encoding: 'utf8',
+    timeout: EXEC_TIMEOUT,
     ...options,
   }).trim();
 }

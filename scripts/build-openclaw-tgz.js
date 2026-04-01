@@ -33,8 +33,12 @@ function log(message) {
 
 function run(command, options = {}) {
   const env = { ...process.env };
-  if (!env.HOME && process.platform === 'win32') {
-    env.HOME = env.USERPROFILE || 'C:\\Users\\runneradmin';
+  if (!env.HOME) {
+    if (process.platform === 'win32') {
+      env.HOME = env.USERPROFILE || 'C:\\Users\\runneradmin';
+    } else {
+      env.HOME = '/Users/runner';
+    }
   }
   execSync(command, {
     stdio: 'inherit',
@@ -46,11 +50,20 @@ function run(command, options = {}) {
 }
 
 function runCapture(command, options = {}) {
+  const env = { ...process.env };
+  if (!env.HOME) {
+    if (process.platform === 'win32') {
+      env.HOME = env.USERPROFILE || 'C:\\Users\\runneradmin';
+    } else {
+      env.HOME = '/Users/runner';
+    }
+  }
   return execSync(command, {
     stdio: ['ignore', 'pipe', 'pipe'],
     shell: process.platform === 'win32',
     encoding: 'utf8',
     timeout: EXEC_TIMEOUT,
+    env,
     ...options,
   }).trim();
 }

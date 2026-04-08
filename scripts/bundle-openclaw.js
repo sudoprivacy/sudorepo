@@ -48,6 +48,7 @@ const KNOWN_OPTIONAL_EXTERNALS = [
   'ora',
   'log-symbols',
   'is-unicode-supported',
+  'tslog',
   // LLM / AI
   'node-llama-cpp',
   // Media

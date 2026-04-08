@@ -364,6 +364,84 @@ function pruneDocsToRuntimeSubset(pkgDir) {
 }
 
 // ---------------------------------------------------------------------------
+// Extension bundling
+// ---------------------------------------------------------------------------
+
+async function bundleExtensions(pkgDir, esbuild, globalExternals) {
+  const extensionsDir = path.join(pkgDir, 'extensions');
+  if (!fs.existsSync(extensionsDir)) {
+    console.log('[bundle-openclaw] No extensions/ directory, skipping extension bundling');
+    return;
+  }
+
+  const extEntries = fs.readdirSync(extensionsDir, { withFileTypes: true });
+  const extDirs = extEntries.filter((e) => e.isDirectory()).map((e) => e.name);
+
+  console.log(`[bundle-openclaw] Bundling ${extDirs.length} extensions...`);
+
+  for (const extName of extDirs) {
+    const extPath = path.join(extensionsDir, extName);
+    const indexTs = path.join(extPath, 'index.ts');
+    const indexMjs = path.join(extPath, 'index.mjs');
+
+    // Use existing .mjs if available, otherwise skip (will be bundled from .ts)
+    const entryPoint = fs.existsSync(indexTs) ? indexTs : fs.existsSync(indexMjs) ? indexMjs : null;
+    if (!entryPoint) {
+      console.log(`[bundle-openclaw]   ${extName}: no entry point, skipping`);
+      continue;
+    }
+
+    const outputFile = path.join(extPath, 'index.mjs');
+
+    // Extensions should bundle ALL dependencies - no external except node builtins
+    const extExternals = [...globalExternals.filter((e) => e.startsWith('node:') || getNodeBuiltins().includes(e))];
+
+    console.log(`[bundle-openclaw]   Bundling ${extName}...`);
+    try {
+      await esbuild.build({
+        entryPoints: [entryPoint],
+        bundle: true,
+        platform: 'node',
+        format: 'esm',
+        outfile: outputFile,
+        target: 'node22',
+        sourcemap: false,
+        minify: false,
+        treeShaking: true,
+        external: extExternals,
+        banner: {
+          js: [
+            'import { createRequire } from "node:module";',
+            'import { fileURLToPath } from "node:url";',
+            'const __ext_dirname = path.dirname(fileURLToPath(import.meta.url));',
+            'const require = createRequire(import.meta.url);',
+          ].join('\n'),
+        },
+        define: {
+          '__dirname': '__ext_dirname',
+          '__filename': '__ext_dirname + "/index.mjs"',
+        },
+        logLevel: 'warning',
+      });
+
+      // Remove the original .ts file after successful bundling
+      if (entryPoint.endsWith('.ts')) {
+        fs.unlinkSync(entryPoint);
+        // Also remove any .d.ts files
+        const dtsFile = entryPoint.replace(/\.ts$/, '.d.ts');
+        if (fs.existsSync(dtsFile)) fs.unlinkSync(dtsFile);
+      }
+
+      console.log(`[bundle-openclaw]   ${extName}: done`);
+    } catch (err) {
+      console.warn(`[bundle-openclaw]   ${extName}: bundle failed (${err.message}), keeping original`);
+    }
+  }
+
+  console.log('[bundle-openclaw] Extension bundling complete');
+}
+
+// ---------------------------------------------------------------------------
 // Main
 // ---------------------------------------------------------------------------
 
@@ -647,6 +725,10 @@ async function main() {
 
   console.log(`[bundle-openclaw] Files after bundling: ${filesAfter}`);
   console.log(`[bundle-openclaw] Reduction: ${filesBefore} -> ${filesAfter} (${manifest.reduction})`);
+
+  // Bundle each extension independently so they don't depend on external modules
+  await bundleExtensions(resolvedPkgDir, esbuild, externals);
+
   console.log('[bundle-openclaw] Done.');
 }
 

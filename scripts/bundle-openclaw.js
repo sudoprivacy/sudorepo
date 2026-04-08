@@ -43,6 +43,11 @@ const KNOWN_OPTIONAL_EXTERNALS = [
   // Jiti - uses dynamic require for babel
   '@mariozechner/jiti',
   'jiti',
+  // Common runtime deps
+  'chalk',
+  'ora',
+  'log-symbols',
+  'is-unicode-supported',
   // LLM / AI
   'node-llama-cpp',
   // Media

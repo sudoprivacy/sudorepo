@@ -6,5 +6,9 @@
   "license": "UNLICENSED",
   "scripts": {
     "build:openclaw": "node scripts/build-openclaw-tgz.js"
+  },
+  "dependencies": {
+    "esbuild": "^0.25.1",
+    "tar": "^7.5.13"
   }
 }

@@ -8,12 +8,6 @@ on:
     tags:
       - 'v*'
   workflow_dispatch:
-    inputs:
-      openclaw_version:
-        description: 'OpenClaw version or dist-tag'
-        type: string
-        required: false
-        default: '2026.03.11'
 
 jobs:
   build:
@@ -49,16 +43,13 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '22'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm install
 
       - name: Build archive
-        shell: bash
-        run: |
-          if [ "${{ github.event_name }}" == "push" ]; then
-            VERSION="${{ github.ref_name }}"
-          else
-            VERSION="${{ inputs.openclaw_version }}"
-          fi
-          node scripts/build-openclaw-tgz.js --force --version="$VERSION"
+        run: node scripts/download-openclaw.js
         env:
           npm_config_arch: ${{ matrix.arch }}
 

@@ -49,6 +49,9 @@ const KNOWN_OPTIONAL_EXTERNALS = [
   'log-symbols',
   'is-unicode-supported',
   'tslog',
+  'json5',
+  'yaml',
+  'dotenv',
   // LLM / AI
   'node-llama-cpp',
   // Media

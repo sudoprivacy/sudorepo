@@ -11,7 +11,7 @@ on:
 
 jobs:
   build:
-    name: Build ${{ matrix.asset_name }}
+    name: Build ${{ matrix.platform }}-${{ matrix.arch }}
     runs-on: ${{ matrix.os }}
 
     strategy:
@@ -21,19 +21,15 @@ jobs:
           - os: macos-14
             platform: macos
             arch: arm64
-            asset_name: openclaw-macos-arm64.tgz
           - os: macos-14
             platform: macos
             arch: x64
-            asset_name: openclaw-macos-x64.tgz
           - os: windows-2022
             platform: windows
             arch: arm64
-            asset_name: openclaw-windows-arm64.tgz
           - os: windows-2022
             platform: windows
             arch: x64
-            asset_name: openclaw-windows-x64.tgz
 
     steps:
       - name: Checkout
@@ -53,19 +49,28 @@ jobs:
         env:
           npm_config_arch: ${{ matrix.arch }}
 
+      - name: Resolve asset metadata
+        id: asset_meta
+        shell: bash
+        run: |
+          OPENCLAW_VERSION="$(node -e "const fs=require('fs'); const manifest=JSON.parse(fs.readFileSync('dist/openclaw.manifest.json','utf8')); const version=String(manifest.version || '').trim(); if (!version) throw new Error('Missing openclaw version in manifest'); const match = version.match(/^(\d{4})\.(\d{1,2})\.(\d{1,2})$/); const display = match ? \`v\${match[1]}.\${match[2].padStart(2,'0')}.\${match[3].padStart(2,'0')}\` : \`v\${version}\`; process.stdout.write(display);")"
+          ASSET_BASENAME="${GITHUB_REF_NAME}-${OPENCLAW_VERSION}-sudoclaw-${{ matrix.platform }}-${{ matrix.arch }}"
+          echo "openclaw_version=${OPENCLAW_VERSION}" >> "$GITHUB_OUTPUT"
+          echo "asset_basename=${ASSET_BASENAME}" >> "$GITHUB_OUTPUT"
+
       - name: Rename archive
         shell: bash
         run: |
-          cp dist/openclaw.tgz "dist/${{ matrix.asset_name }}"
-          cp dist/openclaw.manifest.json "dist/${{ matrix.asset_name }}.manifest.json"
+          cp dist/openclaw.tgz "dist/${{ steps.asset_meta.outputs.asset_basename }}.tgz"
+          cp dist/openclaw.manifest.json "dist/${{ steps.asset_meta.outputs.asset_basename }}.manifest.json"
 
       - name: Upload workflow artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.asset_name }}
+          name: ${{ steps.asset_meta.outputs.asset_basename }}
           path: |
-            dist/${{ matrix.asset_name }}
-            dist/${{ matrix.asset_name }}.manifest.json
+            dist/${{ steps.asset_meta.outputs.asset_basename }}.tgz
+            dist/${{ steps.asset_meta.outputs.asset_basename }}.manifest.json
           retention-days: 7
 
   release:
@@ -91,9 +96,11 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.ref_name }}
-          name: OpenClaw Bundles ${{ github.ref_name }}
+          name: Sudoclaw Bundles ${{ github.ref_name }}
           body: |
-            Platform-specific OpenClaw bundles built from npm version `${{ matrix.asset_name }}`.
+            Platform-specific Sudoclaw bundles for `${{ github.ref_name }}`.
+
+            Release asset filenames include both the repo tag and the bundled OpenClaw version.
           files: final-assets/*
           draft: false
           prerelease: false

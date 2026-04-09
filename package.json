@@ -5,7 +5,7 @@
   "description": "Standalone builders for Sudowork runtime artifacts",
   "license": "UNLICENSED",
   "scripts": {
-    "build:openclaw": "node scripts/build-openclaw-tgz.js"
+    "build:openclaw": "node scripts/download-openclaw.js"
   },
   "dependencies": {
     "esbuild": "^0.25.1",

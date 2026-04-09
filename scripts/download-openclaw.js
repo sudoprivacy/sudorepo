@@ -17,6 +17,14 @@ const ROOT_DIR = path.join(__dirname, '..');
 const DIST_DIR = path.join(ROOT_DIR, 'dist');
 const OUTPUT = path.join(DIST_DIR, 'openclaw.tgz');
 const OUTPUT_MANIFEST = path.join(DIST_DIR, 'openclaw.manifest.json');
+const TARGET_PLATFORM =
+  process.env.npm_config_platform ||
+  process.env.NPM_CONFIG_PLATFORM ||
+  process.platform;
+const TARGET_ARCH =
+  process.env.npm_config_arch ||
+  process.env.NPM_CONFIG_ARCH ||
+  process.arch;
 
 // 支持从命令行传递版本: --version=2026.03.11
 const versionArg = process.argv.find((arg) => arg.startsWith('--version='));
@@ -104,7 +112,7 @@ function logCommandOutput(label, command, cwd) {
 function logOpenClawDiagnostics(stage, pkgDir, entryPoint, outputFile) {
   console.log(`[openclaw][diag] ===== ${stage} =====`);
   console.log(
-    `[openclaw][diag] env node=${process.version} npm_config_platform=${process.env.npm_config_platform || '(unset)'} npm_config_arch=${process.env.npm_config_arch || '(unset)'} platform=${process.platform} arch=${process.arch}`,
+    `[openclaw][diag] env node=${process.version} npm_config_platform=${process.env.npm_config_platform || '(unset)'} npm_config_arch=${process.env.npm_config_arch || '(unset)'} platform=${process.platform} arch=${process.arch} targetPlatform=${TARGET_PLATFORM} targetArch=${TARGET_ARCH}`,
   );
 
   const openclawPkg = readJsonIfExists(path.join(pkgDir, 'package.json'));
@@ -145,17 +153,18 @@ function logOpenClawDiagnostics(stage, pkgDir, entryPoint, outputFile) {
 }
 
 function getDaveyBindingDirName() {
-  const platform = process.platform === 'win32' ? 'win32' : process.platform === 'darwin' ? 'darwin' : 'linux';
-  const arch = process.arch === 'arm64' ? 'arm64' : 'x64';
+  const platform = TARGET_PLATFORM === 'win32' ? 'win32' : TARGET_PLATFORM === 'darwin' ? 'darwin' : 'linux';
+  const arch = TARGET_ARCH === 'arm64' ? 'arm64' : 'x64';
   const suffix = platform === 'win32' ? 'msvc' : platform === 'linux' ? 'gnu' : '';
   return `davey-${platform}-${arch}${suffix ? `-${suffix}` : ''}`;
 }
 
 function writeOpenClawManifest(version) {
   const manifest = {
+    package: 'openclaw',
     version,
-    platform: process.platform,
-    arch: process.arch,
+    platform: TARGET_PLATFORM,
+    arch: TARGET_ARCH,
     daveyBinding: `@snazzah/${getDaveyBindingDirName()}`,
     generatedAt: new Date().toISOString(),
   };
@@ -187,6 +196,10 @@ try {
   }
 
   const pkgDir = path.join(extractDir, 'package');
+  const pkgJson = readJsonIfExists(path.join(pkgDir, 'package.json'));
+  if (pkgJson?.version) {
+    version = pkgJson.version;
+  }
   const distEntry = path.join(pkgDir, 'dist', 'entry.mjs');
   const distEntryJs = path.join(pkgDir, 'dist', 'entry.js');
 

@@ -19,8 +19,8 @@ npm run build:openclaw
 Optional flags:
 
 ```bash
-node scripts/build-openclaw-tgz.js --version=2026.3.11
-node scripts/build-openclaw-tgz.js --version=latest --force
+node scripts/download-openclaw.js --version=2026.3.11
+node scripts/download-openclaw.js --version=latest
 ```
 
 Artifacts are written to `dist/`.
@@ -34,7 +34,7 @@ It can:
 - build matrix artifacts for macOS and Windows
 - upload workflow artifacts
 - optionally create a GitHub Release with renamed assets like:
-  - `openclaw-macos-arm64.tgz`
-  - `openclaw-macos-x64.tgz`
-  - `openclaw-windows-arm64.tgz`
-  - `openclaw-windows-x64.tgz`
+  - `v0.1.0-v2026.03.11-sudoclaw-macos-arm64.tgz`
+  - `v0.1.0-v2026.03.11-sudoclaw-macos-x64.tgz`
+  - `v0.1.0-v2026.03.11-sudoclaw-windows-arm64.tgz`
+  - `v0.1.0-v2026.03.11-sudoclaw-windows-x64.tgz`

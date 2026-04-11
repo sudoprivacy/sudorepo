@@ -106,7 +106,7 @@ jobs:
           python -m pip install coscmd
 
           echo "Configuring coscmd..."
-          coscmd config -a "${COS_SECRET_ID}" -s "${COS_SECRET_KEY}" -b "${COS_BUCKET}" -r "${COS_REGION}" -e cos.accelerate.myqcloud.com
+          coscmd config -a "${COS_SECRET_ID}" -s "${COS_SECRET_KEY}" -b "${COS_BUCKET}" -e cos.accelerate.myqcloud.com
 
           for upload_path in \
             "dist/${ASSET_BASENAME}.tgz" \

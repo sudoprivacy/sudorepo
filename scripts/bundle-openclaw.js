@@ -160,17 +160,46 @@ function readJsonFile(filePath) {
 }
 
 function collectRuntimeRequirePackages(bundleFile, builtins) {
-  if (!fs.existsSync(bundleFile)) return [];
-
-  const content = fs.readFileSync(bundleFile, 'utf-8');
   const packages = new Set();
-  const requirePattern = /\brequire\d*\((['"])([^"'./][^"']*)\1\)/g;
+  const jsFiles = [];
 
-  for (const match of content.matchAll(requirePattern)) {
-    const specifier = match[2];
-    const pkgName = getPackageNameFromSpecifier(specifier);
-    if (!pkgName || builtins.has(specifier) || builtins.has(pkgName)) continue;
-    packages.add(pkgName);
+  const addJsFiles = (targetPath) => {
+    if (!targetPath || !fs.existsSync(targetPath)) return;
+
+    const stat = fs.statSync(targetPath);
+    if (stat.isDirectory()) {
+      for (const entry of fs.readdirSync(targetPath, { withFileTypes: true })) {
+        addJsFiles(path.join(targetPath, entry.name));
+      }
+      return;
+    }
+
+    if (!/\.(?:[cm]?js)$/i.test(targetPath)) return;
+    jsFiles.push(targetPath);
+  };
+
+  for (const target of Array.isArray(bundleFile) ? bundleFile : [bundleFile]) {
+    addJsFiles(target);
+  }
+
+  const patterns = [
+    /\brequire\d*\((['"])([^"'./][^"']*)\1\)/g,
+    /\bimport\s*\((['"])([^"'./][^"']*)\1\)/g,
+    /\b(?:import|export)\s+[^'"]*?\sfrom\s+(['"])([^"'./][^"']*)\1/g,
+    /\bimport\s+(['"])([^"'./][^"']*)\1/g,
+  ];
+
+  for (const filePath of jsFiles) {
+    const content = fs.readFileSync(filePath, 'utf-8');
+
+    for (const pattern of patterns) {
+      for (const match of content.matchAll(pattern)) {
+        const specifier = match[2];
+        const pkgName = getPackageNameFromSpecifier(specifier);
+        if (!pkgName || builtins.has(specifier) || builtins.has(pkgName)) continue;
+        packages.add(pkgName);
+      }
+    }
   }
 
   return [...packages].sort();
@@ -542,7 +571,10 @@ async function main() {
     throw new Error('esbuild did not produce output file');
   }
 
-  const runtimeRequirePackages = collectRuntimeRequirePackages(outputFile, new Set(getNodeBuiltins()));
+  const runtimeRequirePackages = collectRuntimeRequirePackages([
+    outputFile,
+    path.join(resolvedPkgDir, 'dist'),
+  ], new Set(getNodeBuiltins()));
   const runtimeDependencyPackages = collectTransitivePackageDeps(resolvedPkgDir, runtimeRequirePackages);
   const externalDependencyPackages = collectTransitivePackageDeps(resolvedPkgDir, [
     ...KNOWN_OPTIONAL_EXTERNALS,

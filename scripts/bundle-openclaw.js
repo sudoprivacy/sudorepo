@@ -58,6 +58,7 @@ const EXCLUDED_BUNDLED_EXTENSION_DIRS = new Set([
 /** Packages that the core runtime still loads indirectly via bundled config/text surfaces. */
 const REQUIRED_RUNTIME_PACKAGES = [
   'markdown-it',
+  'playwright-core',
   'tar',
 ];
 
@@ -968,7 +969,10 @@ async function main() {
     ...new Set([
       ...REQUIRED_RUNTIME_PACKAGES,
       ...collectBundleExternalPackages(buildResult?.metafile, outputFile, builtinSet),
-      ...collectRuntimeRequirePackages(path.join(resolvedPkgDir, 'dist'), builtinSet),
+      ...collectRuntimeRequirePackages([
+        outputFile,
+        path.join(resolvedPkgDir, 'dist'),
+      ], builtinSet),
     ]),
   ].sort().filter((packageName) => forceKeptRuntimePackages.has(packageName) || !excludedOnlyPackages.has(packageName));
   const filteredKnownOptionalExternals = KNOWN_OPTIONAL_EXTERNALS.filter((packageName) => !excludedOnlyPackages.has(packageName));

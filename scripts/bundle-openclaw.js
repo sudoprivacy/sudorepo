@@ -26,6 +26,9 @@ const path = require('path');
 /** Packages that use dynamic require/import or optional native bindings.
  *  These are externalized so esbuild doesn't try to resolve them at bundle time. */
 const KNOWN_OPTIONAL_EXTERNALS = [
+  // Runtime loaders with relative self-references that break when inlined.
+  'jiti',
+  '@mariozechner/jiti',
   // LLM / AI
   'node-llama-cpp',
   // Media
@@ -541,10 +544,15 @@ async function main() {
 
   const runtimeRequirePackages = collectRuntimeRequirePackages(outputFile, new Set(getNodeBuiltins()));
   const runtimeDependencyPackages = collectTransitivePackageDeps(resolvedPkgDir, runtimeRequirePackages);
+  const externalDependencyPackages = collectTransitivePackageDeps(resolvedPkgDir, [
+    ...KNOWN_OPTIONAL_EXTERNALS,
+    ...nativeExternals,
+  ]);
 
   const outputSize = fs.statSync(outputFile).size;
   console.log(`[bundle-openclaw] Bundle created: ${outputFile} (${(outputSize / 1024 / 1024).toFixed(1)} MB)`);
   console.log(`[bundle-openclaw] Runtime JS packages kept: ${runtimeDependencyPackages.join(', ') || '(none)'}`);
+  console.log(`[bundle-openclaw] External package deps kept: ${externalDependencyPackages.join(', ') || '(none)'}`);
 
   // Clean up node_modules - keep only native binding directories
   console.log('[bundle-openclaw] Cleaning node_modules (keeping native addons + runtime JS deps)...');
@@ -552,6 +560,7 @@ async function main() {
     ...nativeExternals,
     ...KNOWN_OPTIONAL_EXTERNALS,
     ...runtimeDependencyPackages,
+    ...externalDependencyPackages,
   ]);
 
   if (fs.existsSync(nmDir)) {
@@ -606,6 +615,7 @@ async function main() {
     nativeExternals,
     runtimeRequirePackages,
     runtimeDependencyPackages,
+    externalDependencyPackages,
     filesBefore,
     filesAfter,
     reduction: `${((1 - filesAfter / filesBefore) * 100).toFixed(1)}%`,

@@ -54,9 +54,16 @@ jobs:
         shell: bash
         run: |
           OPENCLAW_VERSION="$(node -e "const fs=require('fs'); const manifest=JSON.parse(fs.readFileSync('dist/openclaw.manifest.json','utf8')); const version=String(manifest.version || '').trim(); if (!version) throw new Error('Missing openclaw version in manifest'); const match = version.match(/^(\d{4})\.(\d{1,2})\.(\d{1,2})$/); const display = match ? \`v\${match[1]}.\${match[2].padStart(2,'0')}.\${match[3].padStart(2,'0')}\` : \`v\${version}\`; process.stdout.write(display);")"
-          ASSET_BASENAME="${GITHUB_REF_NAME}-${OPENCLAW_VERSION}-sudoclaw-${{ matrix.platform }}-${{ matrix.arch }}"
+          SAFE_REF_NAME="$(printf '%s' "${GITHUB_REF_NAME}" | tr '/[:space:]' '--')"
+          ASSET_BASENAME="${SAFE_REF_NAME}-${OPENCLAW_VERSION}-sudoclaw-${{ matrix.platform }}-${{ matrix.arch }}"
+          if [ "${GITHUB_REF_TYPE}" = "tag" ] && [ -n "${GITHUB_REF_NAME}" ]; then
+            UPLOAD_VERSION="${GITHUB_REF_NAME}"
+          else
+            UPLOAD_VERSION="${OPENCLAW_VERSION}"
+          fi
           echo "openclaw_version=${OPENCLAW_VERSION}" >> "$GITHUB_OUTPUT"
           echo "asset_basename=${ASSET_BASENAME}" >> "$GITHUB_OUTPUT"
+          echo "upload_version=${UPLOAD_VERSION}" >> "$GITHUB_OUTPUT"
 
       - name: Rename archive
         shell: bash
@@ -72,6 +79,50 @@ jobs:
             dist/${{ steps.asset_meta.outputs.asset_basename }}.tgz
             dist/${{ steps.asset_meta.outputs.asset_basename }}.manifest.json
           retention-days: 7
+
+      - name: Set up Python for COS upload
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: Upload bundle to COS
+        shell: bash
+        env:
+          COS_SECRET_ID: ${{ secrets.COS_SECRET_ID || vars.COS_SECRET_ID }}
+          COS_SECRET_KEY: ${{ secrets.COS_SECRET_KEY || vars.COS_SECRET_KEY }}
+          COS_BUCKET: ${{ secrets.COS_BUCKET || vars.COS_BUCKET }}
+          COS_REGION: ${{ secrets.COS_REGION || vars.COS_REGION }}
+          COS_BASE_URL: ${{ secrets.COS_BASE_URL || vars.COS_BASE_URL }}
+          UPLOAD_VERSION: ${{ steps.asset_meta.outputs.upload_version }}
+          ASSET_BASENAME: ${{ steps.asset_meta.outputs.asset_basename }}
+        run: |
+          if [ -z "${COS_SECRET_ID}" ] || [ -z "${COS_SECRET_KEY}" ] || [ -z "${COS_BUCKET}" ] || [ -z "${COS_REGION}" ]; then
+            echo "Missing COS configuration. Required: COS_SECRET_ID, COS_SECRET_KEY, COS_BUCKET, COS_REGION in secrets or vars"
+            exit 1
+          fi
+
+          echo "Installing coscmd..."
+          python -m pip install --upgrade pip
+          python -m pip install coscmd
+
+          echo "Configuring coscmd..."
+          coscmd config -a "${COS_SECRET_ID}" -s "${COS_SECRET_KEY}" -b "${COS_BUCKET}" -r "${COS_REGION}"
+
+          for upload_path in \
+            "dist/${ASSET_BASENAME}.tgz" \
+            "dist/${ASSET_BASENAME}.manifest.json"
+          do
+            remote_path="${UPLOAD_VERSION}/$(basename "${upload_path}")"
+            echo "Uploading ${upload_path} -> ${remote_path}"
+            ls -lh "${upload_path}"
+            coscmd upload "${upload_path}" "${remote_path}"
+
+            if [ -n "${COS_BASE_URL}" ]; then
+              echo "URL: ${COS_BASE_URL%/}/${remote_path}"
+            else
+              echo "URL: https://${COS_BUCKET}.cos.${COS_REGION}.myqcloud.com/${remote_path}"
+            fi
+          done
 
   release:
     name: Create release

@@ -80,41 +80,43 @@ jobs:
             dist/${{ steps.asset_meta.outputs.asset_basename }}.manifest.json
           retention-days: 7
 
-      - name: Upload archive to COS
-        uses: tencentcloud/cos-action@v1
+      - name: Set up Python for COS upload
+        uses: actions/setup-python@v5
         with:
-          secret_id: ${{ secrets.COS_SECRET_ID || vars.COS_SECRET_ID }}
-          secret_key: ${{ secrets.COS_SECRET_KEY || vars.COS_SECRET_KEY }}
-          cos_bucket: ${{ secrets.COS_BUCKET || vars.COS_BUCKET }}
-          cos_region: ${{ secrets.COS_REGION || vars.COS_REGION }}
-          local_path: ./dist/${{ steps.asset_meta.outputs.asset_basename }}.tgz
-          remote_path: /${{ steps.asset_meta.outputs.upload_version }}/${{ steps.asset_meta.outputs.asset_basename }}.tgz
-          clean: false
+          python-version: '3.x'
 
-      - name: Upload manifest to COS
-        uses: tencentcloud/cos-action@v1
-        with:
-          secret_id: ${{ secrets.COS_SECRET_ID || vars.COS_SECRET_ID }}
-          secret_key: ${{ secrets.COS_SECRET_KEY || vars.COS_SECRET_KEY }}
-          cos_bucket: ${{ secrets.COS_BUCKET || vars.COS_BUCKET }}
-          cos_region: ${{ secrets.COS_REGION || vars.COS_REGION }}
-          local_path: ./dist/${{ steps.asset_meta.outputs.asset_basename }}.manifest.json
-          remote_path: /${{ steps.asset_meta.outputs.upload_version }}/${{ steps.asset_meta.outputs.asset_basename }}.manifest.json
-          clean: false
-
-      - name: Print COS URLs
+      - name: Upload bundle to COS
         shell: bash
         env:
+          COS_SECRET_ID: ${{ secrets.COS_SECRET_ID || vars.COS_SECRET_ID }}
+          COS_SECRET_KEY: ${{ secrets.COS_SECRET_KEY || vars.COS_SECRET_KEY }}
           COS_BUCKET: ${{ secrets.COS_BUCKET || vars.COS_BUCKET }}
           COS_REGION: ${{ secrets.COS_REGION || vars.COS_REGION }}
           COS_BASE_URL: ${{ secrets.COS_BASE_URL || vars.COS_BASE_URL }}
           UPLOAD_VERSION: ${{ steps.asset_meta.outputs.upload_version }}
           ASSET_BASENAME: ${{ steps.asset_meta.outputs.asset_basename }}
         run: |
-          for remote_path in \
-            "${UPLOAD_VERSION}/${ASSET_BASENAME}.tgz" \
-            "${UPLOAD_VERSION}/${ASSET_BASENAME}.manifest.json"
+          if [ -z "${COS_SECRET_ID}" ] || [ -z "${COS_SECRET_KEY}" ] || [ -z "${COS_BUCKET}" ] || [ -z "${COS_REGION}" ]; then
+            echo "Missing COS configuration. Required: COS_SECRET_ID, COS_SECRET_KEY, COS_BUCKET, COS_REGION in secrets or vars"
+            exit 1
+          fi
+
+          echo "Installing coscmd..."
+          python -m pip install --upgrade pip
+          python -m pip install coscmd
+
+          echo "Configuring coscmd..."
+          coscmd config -a "${COS_SECRET_ID}" -s "${COS_SECRET_KEY}" -b "${COS_BUCKET}" -r "${COS_REGION}" -e cos.accelerate.myqcloud.com
+
+          for upload_path in \
+            "dist/${ASSET_BASENAME}.tgz" \
+            "dist/${ASSET_BASENAME}.manifest.json"
           do
+            remote_path="${UPLOAD_VERSION}/$(basename "${upload_path}")"
+            echo "Uploading ${upload_path} -> ${remote_path}"
+            ls -lh "${upload_path}"
+            coscmd upload "${upload_path}" "${remote_path}"
+
             if [ -n "${COS_BASE_URL}" ]; then
               echo "URL: ${COS_BASE_URL%/}/${remote_path}"
             else

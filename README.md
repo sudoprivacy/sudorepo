@@ -19,7 +19,7 @@ npm run build:openclaw
 Optional flags:
 
 ```bash
-node scripts/download-openclaw.js --version=2026.3.11
+node scripts/download-openclaw.js --version=2026.4.9
 node scripts/download-openclaw.js --version=latest
 ```
 
@@ -34,7 +34,7 @@ It can:
 - build matrix artifacts for macOS and Windows
 - upload workflow artifacts
 - optionally create a GitHub Release with renamed assets like:
-  - `v0.1.0-v2026.03.11-sudoclaw-macos-arm64.tgz`
-  - `v0.1.0-v2026.03.11-sudoclaw-macos-x64.tgz`
-  - `v0.1.0-v2026.03.11-sudoclaw-windows-arm64.tgz`
-  - `v0.1.0-v2026.03.11-sudoclaw-windows-x64.tgz`
+  - `v0.1.0-v2026.04.09-sudoclaw-macos-arm64.tgz`
+  - `v0.1.0-v2026.04.09-sudoclaw-macos-x64.tgz`
+  - `v0.1.0-v2026.04.09-sudoclaw-windows-arm64.tgz`
+  - `v0.1.0-v2026.04.09-sudoclaw-windows-x64.tgz`

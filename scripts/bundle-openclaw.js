@@ -23,6 +23,44 @@ const path = require('path');
 // Constants
 // ---------------------------------------------------------------------------
 
+/** Bundled extensions to exclude from packaged artifacts for the lean runtime. */
+const EXCLUDED_BUNDLED_EXTENSION_DIRS = new Set([
+  'amazon-bedrock',
+  'amazon-bedrock-mantle',
+  'bluebubbles',
+  'diagnostics-otel',
+  'discord',
+  'diffs',
+  'feishu',
+  'googlechat',
+  'imessage',
+  'irc',
+  'line',
+  'matrix',
+  'mattermost',
+  'memory-lancedb',
+  'minimax',
+  'msteams',
+  'nextcloud-talk',
+  'nostr',
+  'qqbot',
+  'slack',
+  'synology-chat',
+  'telegram',
+  'tlon',
+  'twitch',
+  'vydra',
+  'whatsapp',
+  'zalo',
+  'zalouser',
+]);
+
+/** Packages that the core runtime still loads indirectly via bundled config/text surfaces. */
+const REQUIRED_RUNTIME_PACKAGES = [
+  'markdown-it',
+  'tar',
+];
+
 /** Packages that use dynamic require/import or optional native bindings.
  *  These are externalized so esbuild doesn't try to resolve them at bundle time. */
 const KNOWN_OPTIONAL_EXTERNALS = [
@@ -159,6 +197,10 @@ function readJsonFile(filePath) {
   }
 }
 
+function isLikelyPackageName(packageName) {
+  return /^(?:@[a-z0-9._-]+\/[a-z0-9._-]+|[a-z0-9][a-z0-9._-]*)$/i.test(packageName);
+}
+
 function collectRuntimeRequirePackages(bundleFile, builtins) {
   const packages = new Set();
   const jsFiles = [];
@@ -185,8 +227,8 @@ function collectRuntimeRequirePackages(bundleFile, builtins) {
   const patterns = [
     /\brequire\d*\((['"])([^"'./][^"']*)\1\)/g,
     /\bimport\s*\((['"])([^"'./][^"']*)\1\)/g,
-    /\b(?:import|export)\s+[^'"]*?\sfrom\s+(['"])([^"'./][^"']*)\1/g,
-    /\bimport\s+(['"])([^"'./][^"']*)\1/g,
+    /^\s*(?:import|export)\s+[^'"\n]*?\sfrom\s+(['"])([^"'./][^"']*)\1/gm,
+    /^\s*import\s+(['"])([^"'./][^"']*)\1/gm,
   ];
 
   for (const filePath of jsFiles) {
@@ -196,10 +238,31 @@ function collectRuntimeRequirePackages(bundleFile, builtins) {
       for (const match of content.matchAll(pattern)) {
         const specifier = match[2];
         const pkgName = getPackageNameFromSpecifier(specifier);
-        if (!pkgName || builtins.has(specifier) || builtins.has(pkgName)) continue;
+        if (!pkgName || !isLikelyPackageName(pkgName) || builtins.has(specifier) || builtins.has(pkgName)) continue;
         packages.add(pkgName);
       }
     }
+  }
+
+  return [...packages].sort();
+}
+
+function collectBundleExternalPackages(metafile, outputFile, builtins) {
+  if (!metafile || !metafile.outputs) return [];
+
+  const resolvedOutput = path.resolve(outputFile);
+  const outputEntry = Object.entries(metafile.outputs).find(([filePath]) => path.resolve(filePath) === resolvedOutput);
+  if (!outputEntry) return [];
+
+  const [, outputMeta] = outputEntry;
+  const packages = new Set();
+
+  for (const imported of outputMeta.imports || []) {
+    if (!imported.external) continue;
+
+    const pkgName = getPackageNameFromSpecifier(imported.path);
+    if (!pkgName || !isLikelyPackageName(pkgName) || builtins.has(imported.path) || builtins.has(pkgName)) continue;
+    packages.add(pkgName);
   }
 
   return [...packages].sort();
@@ -241,6 +304,87 @@ function collectTransitivePackageDeps(pkgDir, packageNames) {
   }
 
   return [...keepPackages].sort();
+}
+
+function collectNestedPackageTreeDeps(pkgDir, packageNames) {
+  const nmDir = path.join(pkgDir, 'node_modules');
+  const depNames = new Set();
+  const visitedPackageDirs = new Set();
+  const queue = [];
+
+  for (const packageName of packageNames) {
+    const packageDir = path.join(nmDir, packageName);
+    if (fs.existsSync(packageDir)) {
+      queue.push(packageDir);
+    }
+  }
+
+  while (queue.length > 0) {
+    const packageDir = queue.shift();
+    if (!packageDir || visitedPackageDirs.has(packageDir)) continue;
+    visitedPackageDirs.add(packageDir);
+
+    const packageJsonPath = path.join(packageDir, 'package.json');
+    const pkgJson = readJsonFile(packageJsonPath);
+    if (pkgJson && typeof pkgJson === 'object') {
+      const dependencySets = [
+        pkgJson.dependencies,
+        pkgJson.optionalDependencies,
+      ];
+
+      for (const deps of dependencySets) {
+        if (!deps || typeof deps !== 'object') continue;
+        for (const depName of Object.keys(deps)) {
+          depNames.add(depName);
+        }
+      }
+    }
+
+    const nestedNodeModulesDir = path.join(packageDir, 'node_modules');
+    if (!fs.existsSync(nestedNodeModulesDir)) continue;
+
+    for (const entry of fs.readdirSync(nestedNodeModulesDir, { withFileTypes: true })) {
+      if (!entry.isDirectory()) continue;
+
+      if (entry.name.startsWith('@')) {
+        const scopeDir = path.join(nestedNodeModulesDir, entry.name);
+        for (const scopedEntry of fs.readdirSync(scopeDir, { withFileTypes: true })) {
+          if (!scopedEntry.isDirectory()) continue;
+          queue.push(path.join(scopeDir, scopedEntry.name));
+        }
+        continue;
+      }
+
+      queue.push(path.join(nestedNodeModulesDir, entry.name));
+    }
+  }
+
+  return [...depNames].sort();
+}
+
+function collectBundledExtensionDeclaredPackages(extensionsDir, dirNames = null) {
+  if (!extensionsDir || !fs.existsSync(extensionsDir)) return [];
+
+  const packageNames = new Set();
+  const selectedDirNames = dirNames ? new Set(dirNames) : null;
+
+  for (const entry of fs.readdirSync(extensionsDir, { withFileTypes: true })) {
+    if (!entry.isDirectory()) continue;
+    if (selectedDirNames && !selectedDirNames.has(entry.name)) continue;
+
+    const packageJson = readJsonFile(path.join(extensionsDir, entry.name, 'package.json'));
+    if (!packageJson || typeof packageJson !== 'object') continue;
+
+    for (const deps of [packageJson.dependencies, packageJson.optionalDependencies]) {
+      if (!deps || typeof deps !== 'object') continue;
+      for (const packageName of Object.keys(deps)) {
+        if (!isLikelyPackageName(packageName)) continue;
+        packageNames.add(packageName);
+      }
+    }
+  }
+
+  return [...packageNames].sort();
 }
 
 /** Find native addon packages by scanning for .node files in node_modules */
@@ -369,6 +513,230 @@ function pruneDocsToRuntimeSubset(pkgDir) {
   console.log('[bundle-openclaw] Pruned docs/ to docs/reference/templates only');
 }
 
+function pruneNonRuntimeFiles(pkgDir) {
+  const removableDirNames = new Set([
+    '.bin',
+  ]);
+
+  const removableDirPrefixes = [
+    '.ignored',
+    '.cache',
+  ];
+
+  const removableFilePatterns = [
+    /\.d\.(?:ts|mts|cts)$/i,
+    /\.map$/i,
+    /\.test\.(?:[cm]?js|[cm]?ts|tsx|mts)$/i,
+    /\.spec\.(?:[cm]?js|[cm]?ts|tsx|mts)$/i,
+  ];
+
+  let removedFiles = 0;
+  let removedDirs = 0;
+
+  const walk = (dir) => {
+    if (!fs.existsSync(dir)) return;
+
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      const fullPath = path.join(dir, entry.name);
+
+      if (entry.isDirectory()) {
+        if (removableDirNames.has(entry.name) || removableDirPrefixes.some((prefix) => entry.name.startsWith(prefix))) {
+          fs.rmSync(fullPath, { recursive: true, force: true });
+          removedDirs++;
+          continue;
+        }
+
+        walk(fullPath);
+        continue;
+      }
+
+      if (removableFilePatterns.some((pattern) => pattern.test(entry.name))) {
+        fs.rmSync(fullPath, { force: true });
+        removedFiles++;
+      }
+    }
+  };
+
+  walk(pkgDir);
+
+  const packageLockPath = path.join(pkgDir, 'package-lock.json');
+  if (fs.existsSync(packageLockPath)) {
+    fs.rmSync(packageLockPath, { force: true });
+    removedFiles++;
+  }
+
+  const scriptsDir = path.join(pkgDir, 'scripts');
+  if (fs.existsSync(scriptsDir)) {
+    fs.rmSync(scriptsDir, { recursive: true, force: true });
+    removedDirs++;
+  }
+
+  console.log(`[bundle-openclaw] Pruned non-runtime files: removed ${removedFiles} files and ${removedDirs} directories`);
+}
+
+function pruneExcludedBundledExtensions(pkgDir) {
+  const extensionsDir = path.join(pkgDir, 'dist', 'extensions');
+  if (!fs.existsSync(extensionsDir)) return [];
+
+  const removed = [];
+  for (const dirName of EXCLUDED_BUNDLED_EXTENSION_DIRS) {
+    const fullPath = path.join(extensionsDir, dirName);
+    if (!fs.existsSync(fullPath)) continue;
+    fs.rmSync(fullPath, { recursive: true, force: true });
+    removed.push(dirName);
+  }
+
+  if (removed.length > 0) {
+    console.log(`[bundle-openclaw] Removed bundled extensions: ${removed.join(', ')}`);
+  }
+
+  return removed.sort();
+}
+
+function rewriteBundledRuntimeCandidatePaths(bundleFile) {
+  if (!fs.existsSync(bundleFile)) return;
+
+  const replacements = [
+    [
+      'RUNTIME_MODULE_CANDIDATES = ["./runtime.js", "./runtime.ts"];',
+      'RUNTIME_MODULE_CANDIDATES = ["./dist/runtime.js", "./dist/runtime.ts"];',
+    ],
+    [
+      'SETUP_REGISTRY_RUNTIME_CANDIDATES = ["./setup-registry.js", "./setup-registry.ts"];',
+      'SETUP_REGISTRY_RUNTIME_CANDIDATES = ["./dist/setup-registry.js", "./dist/setup-registry.ts"];',
+    ],
+    [
+      'PROVIDER_RUNTIME_CANDIDATES = ["../plugins/provider-runtime.js", "../plugins/provider-runtime.ts"];',
+      'PROVIDER_RUNTIME_CANDIDATES = ["./dist/plugins/provider-runtime.js", "./dist/plugins/provider-runtime.ts"];',
+    ],
+    [
+      'FACADE_ACTIVATION_CHECK_RUNTIME_CANDIDATES = ["./facade-activation-check.runtime.js", "./facade-activation-check.runtime.ts"];',
+      'FACADE_ACTIVATION_CHECK_RUNTIME_CANDIDATES = ["./dist/facade-activation-check.runtime.js", "./dist/facade-activation-check.runtime.ts"];',
+    ],
+  ];
+
+  let content = fs.readFileSync(bundleFile, 'utf-8');
+  let changed = 0;
+
+  for (const [from, to] of replacements) {
+    if (!content.includes(from)) continue;
+    content = content.replaceAll(from, to);
+    changed++;
+  }
+
+  if (changed > 0) {
+    fs.writeFileSync(bundleFile, content, 'utf-8');
+    console.log(`[bundle-openclaw] Rewrote ${changed} bundled runtime candidate path groups`);
+  }
+}
+
+function rewriteGatewayStartupForEarlyHealth(bundleFile) {
+  if (!fs.existsSync(bundleFile)) return;
+
+  const sessionMigrationNeedle = [
+    '  if (!minimalTestGateway) {',
+    '    await runChannelPluginStartupMaintenance({',
+    '      cfg: startupMaintenanceConfig,',
+    '      env: process.env,',
+    '      log: log46',
+    '    });',
+    '    await runStartupSessionMigration({',
+    '      cfg: cfgAtStart,',
+    '      env: process.env,',
+    '      log: log46',
+    '    });',
+    '  }',
+  ].join('\n');
+
+  const sessionMigrationReplacement = [
+    '  if (!minimalTestGateway) {',
+    '    await runChannelPluginStartupMaintenance({',
+    '      cfg: startupMaintenanceConfig,',
+    '      env: process.env,',
+    '      log: log46',
+    '    });',
+    '    void runStartupSessionMigration({',
+    '      cfg: cfgAtStart,',
+    '      env: process.env,',
+    '      log: log46',
+    '    });',
+    '  }',
+  ].join('\n');
+
+  const startupBlockNeedle = [
+    '    if (!minimalTestGateway) {',
+    '      if (deferredConfiguredChannelPluginIds.length > 0) ({ pluginRegistry } = reloadDeferredGatewayPlugins({',
+    '        cfg: gatewayPluginConfigAtStart,',
+    '        workspaceDir: defaultWorkspaceDir,',
+    '        log: log46,',
+    '        coreGatewayHandlers,',
+    '        baseMethods,',
+    '        pluginIds: startupPluginIds,',
+    '        logDiagnostics: false',
+    '      }));',
+    '      log46.info("starting channels and sidecars...");',
+    '      ({ pluginServices } = await startGatewaySidecars({',
+    '        cfg: gatewayPluginConfigAtStart,',
+    '        pluginRegistry,',
+    '        defaultWorkspaceDir,',
+    '        deps,',
+    '        startChannels,',
+    '        log: log46,',
+    '        logHooks,',
+    '        logChannels',
+    '      }));',
+    '    }',
+  ].join('\n');
+
+  const startupBlockReplacement = [
+    '    if (!minimalTestGateway) {',
+    '      if (deferredConfiguredChannelPluginIds.length > 0) ({ pluginRegistry } = reloadDeferredGatewayPlugins({',
+    '        cfg: gatewayPluginConfigAtStart,',
+    '        workspaceDir: defaultWorkspaceDir,',
+    '        log: log46,',
+    '        coreGatewayHandlers,',
+    '        baseMethods,',
+    '        pluginIds: startupPluginIds,',
+    '        logDiagnostics: false',
+    '      }));',
+    '      const deferredGatewaySidecarsDelayMs = Math.max(0, Number.parseInt(process.env.OPENCLAW_GATEWAY_SIDECARS_DEFER_MS ?? "1000", 10) || 0);',
+    '      if (deferredGatewaySidecarsDelayMs > 0) {',
+    '        log46.info(`deferring channels and sidecars by ${deferredGatewaySidecarsDelayMs}ms to prioritize gateway health probes`);',
+    '        await new Promise((resolve17) => setTimeout(resolve17, deferredGatewaySidecarsDelayMs));',
+    '      }',
+    '      log46.info("starting channels and sidecars...");',
+    '      ({ pluginServices } = await startGatewaySidecars({',
+    '        cfg: gatewayPluginConfigAtStart,',
+    '        pluginRegistry,',
+    '        defaultWorkspaceDir,',
+    '        deps,',
+    '        startChannels,',
+    '        log: log46,',
+    '        logHooks,',
+    '        logChannels',
+    '      }));',
+    '    }',
+  ].join('\n');
+
+  let content = fs.readFileSync(bundleFile, 'utf-8');
+  let changed = 0;
+
+  if (content.includes(sessionMigrationNeedle)) {
+    content = content.replace(sessionMigrationNeedle, sessionMigrationReplacement);
+    changed++;
+  }
+
+  if (content.includes(startupBlockNeedle)) {
+    content = content.replace(startupBlockNeedle, startupBlockReplacement);
+    changed++;
+  }
+
+  if (changed > 0) {
+    fs.writeFileSync(bundleFile, content, 'utf-8');
+    console.log(`[bundle-openclaw] Rewrote ${changed} gateway startup block(s) to prioritize early health checks`);
+  }
+}
+
 // Main
 // ---------------------------------------------------------------------------
 
@@ -393,6 +761,7 @@ async function main() {
   }
 
   const outputFile = path.join(resolvedPkgDir, 'openclaw.mjs');
+  const extensionsDir = path.join(resolvedPkgDir, 'dist', 'extensions');
   const filesBefore = countFiles(resolvedPkgDir);
   console.log(`[bundle-openclaw] Files before bundling: ${filesBefore}`);
 
@@ -513,8 +882,9 @@ async function main() {
     'const require = __bundled_createRequire(import.meta.url);',
   ].join('\n');
 
+  let buildResult;
   try {
-    const result = await esbuild.build({
+    buildResult = await esbuild.build({
       entryPoints: [entryPoint],
       bundle: true,
       platform: 'node',
@@ -530,6 +900,7 @@ async function main() {
       minify: false,
       treeShaking: true,
       external: externals,
+      metafile: true,
       banner: { js: banner },
       define: {
         '__dirname': '__bundled_dirname',
@@ -544,21 +915,21 @@ async function main() {
       },
     });
 
-    if (result.errors.length > 0) {
+    if (buildResult.errors.length > 0) {
       console.error('[bundle-openclaw] esbuild reported errors:');
-      for (const err of result.errors) {
+      for (const err of buildResult.errors) {
         console.error(`  ${err.text}`);
       }
       throw new Error('esbuild build failed with errors');
     }
 
-    if (result.warnings.length > 0) {
-      console.log(`[bundle-openclaw] esbuild warnings: ${result.warnings.length}`);
-      for (const w of result.warnings.slice(0, 10)) {
+    if (buildResult.warnings.length > 0) {
+      console.log(`[bundle-openclaw] esbuild warnings: ${buildResult.warnings.length}`);
+      for (const w of buildResult.warnings.slice(0, 10)) {
         console.log(`  ${w.text}`);
       }
-      if (result.warnings.length > 10) {
-        console.log(`  ... and ${result.warnings.length - 10} more`);
+      if (buildResult.warnings.length > 10) {
+        console.log(`  ... and ${buildResult.warnings.length - 10} more`);
       }
     }
   } catch (err) {
@@ -571,28 +942,66 @@ async function main() {
     throw new Error('esbuild did not produce output file');
   }
 
-  const runtimeRequirePackages = collectRuntimeRequirePackages([
-    outputFile,
-    path.join(resolvedPkgDir, 'dist'),
-  ], new Set(getNodeBuiltins()));
+  const excludedBundledExtensionRootPackages = collectBundledExtensionDeclaredPackages(
+    extensionsDir,
+    EXCLUDED_BUNDLED_EXTENSION_DIRS,
+  );
+  rewriteBundledRuntimeCandidatePaths(outputFile);
+  rewriteGatewayStartupForEarlyHealth(outputFile);
+  const removedBundledExtensions = pruneExcludedBundledExtensions(resolvedPkgDir);
+  const keptBundledExtensionRootPackages = collectBundledExtensionDeclaredPackages(extensionsDir);
+  const excludedBundledExtensionDependencyPackages = collectTransitivePackageDeps(
+    resolvedPkgDir,
+    excludedBundledExtensionRootPackages,
+  );
+  const keptBundledExtensionDependencyPackages = collectTransitivePackageDeps(
+    resolvedPkgDir,
+    keptBundledExtensionRootPackages,
+  );
+  const excludedOnlyPackages = new Set(
+    excludedBundledExtensionDependencyPackages.filter((packageName) => !keptBundledExtensionDependencyPackages.includes(packageName)),
+  );
+  const forceKeptRuntimePackages = new Set(REQUIRED_RUNTIME_PACKAGES);
+
+  const builtinSet = new Set(getNodeBuiltins());
+  const runtimeRequirePackages = [
+    ...new Set([
+      ...REQUIRED_RUNTIME_PACKAGES,
+      ...collectBundleExternalPackages(buildResult?.metafile, outputFile, builtinSet),
+      ...collectRuntimeRequirePackages(path.join(resolvedPkgDir, 'dist'), builtinSet),
+    ]),
+  ].sort().filter((packageName) => forceKeptRuntimePackages.has(packageName) || !excludedOnlyPackages.has(packageName));
+  const filteredKnownOptionalExternals = KNOWN_OPTIONAL_EXTERNALS.filter((packageName) => !excludedOnlyPackages.has(packageName));
+  const filteredNativeExternals = nativeExternals.filter((packageName) => !excludedOnlyPackages.has(packageName));
   const runtimeDependencyPackages = collectTransitivePackageDeps(resolvedPkgDir, runtimeRequirePackages);
   const externalDependencyPackages = collectTransitivePackageDeps(resolvedPkgDir, [
-    ...KNOWN_OPTIONAL_EXTERNALS,
-    ...nativeExternals,
+    ...filteredKnownOptionalExternals,
+    ...filteredNativeExternals,
   ]);
+  const nestedDependencyPackages = collectTransitivePackageDeps(resolvedPkgDir, collectNestedPackageTreeDeps(resolvedPkgDir, [
+    ...runtimeDependencyPackages,
+    ...externalDependencyPackages,
+    ...filteredKnownOptionalExternals,
+    ...filteredNativeExternals,
+    ...keptBundledExtensionDependencyPackages,
+  ]));
 
   const outputSize = fs.statSync(outputFile).size;
   console.log(`[bundle-openclaw] Bundle created: ${outputFile} (${(outputSize / 1024 / 1024).toFixed(1)} MB)`);
   console.log(`[bundle-openclaw] Runtime JS packages kept: ${runtimeDependencyPackages.join(', ') || '(none)'}`);
   console.log(`[bundle-openclaw] External package deps kept: ${externalDependencyPackages.join(', ') || '(none)'}`);
+  console.log(`[bundle-openclaw] Nested package deps kept: ${nestedDependencyPackages.join(', ') || '(none)'}`);
+  console.log(`[bundle-openclaw] Excluded-only dependency packages removed from retention: ${[...excludedOnlyPackages].sort().join(', ') || '(none)'}`);
 
   // Clean up node_modules - keep only native binding directories
   console.log('[bundle-openclaw] Cleaning node_modules (keeping native addons + runtime JS deps)...');
   const keepDirs = getNativeModuleDirs(resolvedPkgDir, [
-    ...nativeExternals,
-    ...KNOWN_OPTIONAL_EXTERNALS,
+    ...filteredNativeExternals,
+    ...filteredKnownOptionalExternals,
     ...runtimeDependencyPackages,
     ...externalDependencyPackages,
+    ...nestedDependencyPackages,
+    ...keptBundledExtensionDependencyPackages,
   ]);
 
   if (fs.existsSync(nmDir)) {
@@ -619,7 +1028,7 @@ async function main() {
           const scopedEntries = fs.readdirSync(fullPath, { withFileTypes: true });
           for (const scopedEntry of scopedEntries) {
             const scopedName = `${entryName}/${scopedEntry.name}`;
-            if (!keepDirs.has(scopedName) && !nativeExternals.includes(scopedName) && !KNOWN_OPTIONAL_EXTERNALS.includes(scopedName)) {
+            if (!keepDirs.has(scopedName) && !filteredNativeExternals.includes(scopedName) && !filteredKnownOptionalExternals.includes(scopedName)) {
               fs.rmSync(path.join(fullPath, scopedEntry.name), { recursive: true, force: true });
               removedCount++;
             }
@@ -636,6 +1045,7 @@ async function main() {
 
   pruneKoffiNativeBinaries(resolvedPkgDir);
   pruneDocsToRuntimeSubset(resolvedPkgDir);
+  pruneNonRuntimeFiles(resolvedPkgDir);
 
   // Write bundle manifest
   const filesAfter = countFiles(resolvedPkgDir);
@@ -645,9 +1055,15 @@ async function main() {
     originalEntry: path.relative(resolvedPkgDir, entryPoint),
     outputSize,
     nativeExternals,
+    removedBundledExtensions,
+    excludedBundledExtensionRootPackages,
+    excludedBundledExtensionDependencyPackages,
+    keptBundledExtensionRootPackages,
+    keptBundledExtensionDependencyPackages,
     runtimeRequirePackages,
     runtimeDependencyPackages,
     externalDependencyPackages,
+    nestedDependencyPackages,
     filesBefore,
     filesAfter,
     reduction: `${((1 - filesAfter / filesBefore) * 100).toFixed(1)}%`,

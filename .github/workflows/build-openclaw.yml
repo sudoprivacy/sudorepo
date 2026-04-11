@@ -80,28 +80,27 @@ jobs:
             dist/${{ steps.asset_meta.outputs.asset_basename }}.manifest.json
           retention-days: 7
 
-      - name: Prepare COS upload payload
-        shell: bash
-        env:
-          ASSET_BASENAME: ${{ steps.asset_meta.outputs.asset_basename }}
-        run: |
-          rm -rf dist/cos-upload
-          mkdir -p dist/cos-upload
-          cp "dist/${ASSET_BASENAME}.tgz" dist/cos-upload/
-          cp "dist/${ASSET_BASENAME}.manifest.json" dist/cos-upload/
-          ls -lh dist/cos-upload
-
-      - name: Upload bundle to COS
+      - name: Upload archive to COS
         uses: tencentcloud/cos-action@v1
         with:
           secret_id: ${{ secrets.COS_SECRET_ID || vars.COS_SECRET_ID }}
           secret_key: ${{ secrets.COS_SECRET_KEY || vars.COS_SECRET_KEY }}
           cos_bucket: ${{ secrets.COS_BUCKET || vars.COS_BUCKET }}
           cos_region: ${{ secrets.COS_REGION || vars.COS_REGION }}
-          local_path: ./dist/cos-upload
-          remote_path: /${{ steps.asset_meta.outputs.upload_version }}/
+          local_path: ./dist/${{ steps.asset_meta.outputs.asset_basename }}.tgz
+          remote_path: /${{ steps.asset_meta.outputs.upload_version }}/${{ steps.asset_meta.outputs.asset_basename }}.tgz
           clean: false
-          accelerate: true
+
+      - name: Upload manifest to COS
+        uses: tencentcloud/cos-action@v1
+        with:
+          secret_id: ${{ secrets.COS_SECRET_ID || vars.COS_SECRET_ID }}
+          secret_key: ${{ secrets.COS_SECRET_KEY || vars.COS_SECRET_KEY }}
+          cos_bucket: ${{ secrets.COS_BUCKET || vars.COS_BUCKET }}
+          cos_region: ${{ secrets.COS_REGION || vars.COS_REGION }}
+          local_path: ./dist/${{ steps.asset_meta.outputs.asset_basename }}.manifest.json
+          remote_path: /${{ steps.asset_meta.outputs.upload_version }}/${{ steps.asset_meta.outputs.asset_basename }}.manifest.json
+          clean: false
 
       - name: Print COS URLs
         shell: bash

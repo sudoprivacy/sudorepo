@@ -31,7 +31,6 @@ const EXCLUDED_BUNDLED_EXTENSION_DIRS = new Set([
   'diagnostics-otel',
   'discord',
   'diffs',
-  'feishu',
   'googlechat',
   'imessage',
   'irc',
@@ -84,6 +83,8 @@ const KNOWN_OPTIONAL_EXTERNALS = [
   'utf-8-validate',
   'zlib-sync',
   'cpu-features',
+  // File type detection
+  'file-type',
   // Playwright / Chromium
   'playwright',
   'playwright-core',
@@ -738,6 +739,59 @@ function rewriteGatewayStartupForEarlyHealth(bundleFile) {
   }
 }
 
+/** Fix deprecated file-type/core.js imports (removed in v17+).
+ *  In old versions: import fileType from "file-type/core.js"
+ *  In v17+: no default export; use named export fileTypeFromBuffer */
+function rewriteDeprecatedFileTypeImports(pkgDir, bundleFile) {
+  const fixContent = (content) => {
+    let changed = false;
+    // Replace deprecated subpath import with named export alias
+    if (content.includes('file-type/core.js')) {
+      content = content.replaceAll('import fileType from "file-type/core.js"', 'import { fileTypeFromBuffer as fileType } from "file-type"');
+      changed = true;
+    }
+    // Also fix any already-rewritten-but-still-broken default imports (edge case)
+    if (content.includes('import fileType from "file-type"')) {
+      content = content.replaceAll('import fileType from "file-type"', 'import { fileTypeFromBuffer as fileType } from "file-type"');
+      changed = true;
+    }
+    return { content, changed };
+  };
+
+  // Fix the main bundle output
+  if (fs.existsSync(bundleFile)) {
+    let content = fs.readFileSync(bundleFile, 'utf-8');
+    const { content: fixed, changed } = fixContent(content);
+    if (changed) {
+      fs.writeFileSync(bundleFile, fixed, 'utf-8');
+      console.log('[bundle-openclaw] Rewrote file-type/core.js -> fileTypeFromBuffer in bundle');
+    }
+  }
+
+  // Also fix any esm chunk files in dist/ that may contain the deprecated import
+  const distDir = path.join(pkgDir, 'dist');
+  if (!fs.existsSync(distDir)) return;
+  let fixed = 0;
+  for (const entry of fs.readdirSync(distDir)) {
+    if (!/\.js$/i.test(entry)) continue;
+    const filePath = path.join(distDir, entry);
+    let content;
+    try {
+      content = fs.readFileSync(filePath, 'utf-8');
+    } catch {
+      continue;
+    }
+    const { content: fixedContent, changed } = fixContent(content);
+    if (changed) {
+      fs.writeFileSync(filePath, fixedContent, 'utf-8');
+      fixed++;
+    }
+  }
+  if (fixed > 0) {
+    console.log(`[bundle-openclaw] Rewrote file-type imports in ${fixed} dist chunk(s)`);
+  }
+}
+
 // Main
 // ---------------------------------------------------------------------------
 
@@ -949,6 +1003,7 @@ async function main() {
   );
   rewriteBundledRuntimeCandidatePaths(outputFile);
   rewriteGatewayStartupForEarlyHealth(outputFile);
+  rewriteDeprecatedFileTypeImports(resolvedPkgDir, outputFile);
   const removedBundledExtensions = pruneExcludedBundledExtensions(resolvedPkgDir);
   const keptBundledExtensionRootPackages = collectBundledExtensionDeclaredPackages(extensionsDir);
   const excludedBundledExtensionDependencyPackages = collectTransitivePackageDeps(

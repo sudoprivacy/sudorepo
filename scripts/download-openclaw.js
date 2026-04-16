@@ -29,7 +29,7 @@ const TARGET_ARCH =
 // 支持从命令行传递版本: --version=2026.04.09
 const versionArg = process.argv.find((arg) => arg.startsWith('--version='));
 const CLI_VERSION = versionArg ? versionArg.split('=')[1] : null;
-const DEFAULT_VERSION = '2026.4.9';
+const DEFAULT_VERSION = '2026.3.23-2';
 const NPM_REGISTRY = 'https://registry.npmjs.org/';
 
 fs.mkdirSync(DIST_DIR, { recursive: true });
